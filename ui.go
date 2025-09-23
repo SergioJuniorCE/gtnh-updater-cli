@@ -116,7 +116,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					// proceed to destination prompt (will backup automatically before migrating)
 					m.text.SetValue("")
-					m.text.Placeholder = "Path to NEW GTNH instance (destination). A backup will be created."
+					m.text.Placeholder = "Name for NEW GTNH instance (folder under instances dir)"
 					m.step = stepPromptDest
 					return m, m.text.Focus()
 				}
@@ -124,27 +124,51 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case stepPromptDest:
 			if msg.String() == "enter" {
-				dest := strings.TrimSpace(m.text.Value())
-				if dest == "" {
+				name := strings.TrimSpace(m.text.Value())
+				if name == "" {
 					break
 				}
-				info, err := os.Stat(dest)
-				if err != nil || !info.IsDir() {
+				if strings.ContainsAny(name, "\\/:*?\"<>|") {
 					m.text.SetValue("")
-					m.text.Placeholder = "Invalid destination path. Try again."
+					m.text.Placeholder = "Invalid name. Avoid path separators/special chars."
 					break
 				}
 				cfg, _ := loadConfig()
-				srcRoot := ""
+				base := ""
 				if cfg != nil && cfg.InstancesDir != "" {
-					srcRoot = cfg.InstancesDir
+					base = cfg.InstancesDir
+				} else {
+					m.text.SetValue("")
+					m.text.Placeholder = "Instances directory not set. Restart."
+					break
 				}
-				source := filepath.Join(srcRoot, m.selectedInstance)
-				// backup first
-				if _, err := backupInstanceDir(dest); err != nil {
-					m.choice = fmt.Sprintf("Backup failed: %v", err)
-					m.step = stepDone
-					return m, tea.Quit
+				dest := filepath.Join(base, name)
+				created := false
+				info, err := os.Stat(dest)
+				if os.IsNotExist(err) {
+					if err := os.MkdirAll(dest, 0o755); err != nil {
+						m.text.SetValue("")
+						m.text.Placeholder = "Failed to create folder. Try another name."
+						break
+					}
+					created = true
+				} else if err != nil {
+					m.text.SetValue("")
+					m.text.Placeholder = "Cannot access destination folder. Try another name."
+					break
+				} else if !info.IsDir() {
+					m.text.SetValue("")
+					m.text.Placeholder = "A file with that name exists. Try another name."
+					break
+				}
+				source := filepath.Join(base, m.selectedInstance)
+				// backup only if destination already existed
+				if !created {
+					if _, err := backupInstanceDir(dest); err != nil {
+						m.choice = fmt.Sprintf("Backup failed: %v", err)
+						m.step = stepDone
+						return m, tea.Quit
+					}
 				}
 				if err := migrateInstance(source, dest); err != nil {
 					m.choice = fmt.Sprintf("Migration failed: %v", err)

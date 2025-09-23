@@ -52,6 +52,28 @@ func pathExists(p string) bool {
 	return err == nil
 }
 
+func firstExistingPath(rel string, roots []string) (string, bool) {
+	for _, root := range roots {
+		candidate := filepath.Join(root, rel)
+		if pathExists(candidate) {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func preferredDestinationPath(rel string, roots []string) string {
+	for _, root := range roots {
+		if pathExists(root) {
+			return filepath.Join(root, rel)
+		}
+	}
+	if len(roots) == 0 {
+		return rel
+	}
+	return filepath.Join(roots[len(roots)-1], rel)
+}
+
 // backupInstanceDir creates a timestamped folder copy of the destination instance
 // e.g. C:\instances\GTNH -> C:\instances\GTNH.backup-20250101-120102
 func backupInstanceDir(destInstancePath string) (string, error) {
@@ -91,22 +113,35 @@ func migrateInstance(sourceInstancePath, destinationInstancePath string) error {
 		"options.txt",
 	}
 
+	sourceRoots := []string{
+		filepath.Join(sourceInstancePath, ".minecraft"),
+		filepath.Join(sourceInstancePath, "minecraft"),
+		sourceInstancePath,
+	}
+	destRoots := []string{
+		filepath.Join(destinationInstancePath, ".minecraft"),
+		filepath.Join(destinationInstancePath, "minecraft"),
+		destinationInstancePath,
+	}
+
 	for _, d := range toCopyDirs {
-		src := filepath.Join(sourceInstancePath, d)
-		dst := filepath.Join(destinationInstancePath, d)
-		if pathExists(src) {
-			if err := copyDir(src, dst); err != nil {
-				return fmt.Errorf("copy dir %s: %w", d, err)
-			}
+		src, ok := firstExistingPath(d, sourceRoots)
+		if !ok {
+			continue
+		}
+		dst := preferredDestinationPath(d, destRoots)
+		if err := copyDir(src, dst); err != nil {
+			return fmt.Errorf("copy dir %s: %w", d, err)
 		}
 	}
 	for _, f := range toCopyFiles {
-		src := filepath.Join(sourceInstancePath, f)
-		dst := filepath.Join(destinationInstancePath, f)
-		if pathExists(src) {
-			if err := copyFile(src, dst); err != nil {
-				return fmt.Errorf("copy file %s: %w", f, err)
-			}
+		src, ok := firstExistingPath(f, sourceRoots)
+		if !ok {
+			continue
+		}
+		dst := preferredDestinationPath(f, destRoots)
+		if err := copyFile(src, dst); err != nil {
+			return fmt.Errorf("copy file %s: %w", f, err)
 		}
 	}
 	return nil

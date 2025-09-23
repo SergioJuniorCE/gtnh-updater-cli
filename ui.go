@@ -170,13 +170,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, tea.Quit
 					}
 				}
+				// download and extract selected GTNH version into destination
+				zipPath, err := downloadVersionZip(m.selectedVersion, dest)
+				if err != nil {
+					m.choice = fmt.Sprintf("Download failed: %v", err)
+					m.step = stepDone
+					return m, tea.Quit
+				}
+				if err := extractZip(zipPath, dest); err != nil {
+					m.choice = fmt.Sprintf("Extract failed: %v", err)
+					m.step = stepDone
+					return m, tea.Quit
+				}
+				_ = os.Remove(zipPath)
+				_ = maybeFlattenSingleDir(dest)
+				// copy user data from selected instance
 				if err := migrateInstance(source, dest); err != nil {
 					m.choice = fmt.Sprintf("Migration failed: %v", err)
 					m.step = stepDone
 					return m, tea.Quit
 				}
-				_ = writeMigrationTips(dest)
-				m.choice = fmt.Sprintf("Migrated '%s' to\n%s\nSelected version: %s", m.selectedInstance, dest, m.selectedVersion)
+				m.choice = fmt.Sprintf("Created new instance '%s' at\n%s\nwith version: %s", m.selectedInstance, dest, m.selectedVersion)
 				m.step = stepDone
 				return m, tea.Quit
 			}

@@ -8,7 +8,7 @@ import (
 )
 
 func fetchAvailableVersions() ([]string, error) {
-	resp, err := http.Get("https://downloads.gtnewhorizons.com/Multi_mc_downloads/?raw")
+	resp, err := http.Get(gtnhDownloadsListingURL)
 	if err != nil {
 		return nil, err
 	}

@@ -27,7 +27,7 @@ func fetchAvailableVersions() ([]string, error) {
 		if trimmed == "" {
 			continue
 		}
-		if !strings.Contains(trimmed, "Java_17-21") {
+		if !strings.Contains(trimmed, "Java_17-") {
 			continue
 		}
 		results = append(results, trimmed)

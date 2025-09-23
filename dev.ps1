@@ -1,6 +1,6 @@
 param(
     [Parameter(Position=0)]
-    [ValidateSet('run','build','clean','help')]
+    [ValidateSet('run','build','clean','watch','help')]
     [string]$Task = 'help'
 )
 
@@ -34,8 +34,9 @@ switch ($Task) {
     'run'   { Invoke-Run }
     'build' { Invoke-Build }
     'clean' { Invoke-Clean }
+    'watch' { Invoke-Watch }
     default {
-        Write-Host "Usage: .\dev.ps1 [run|build|clean|help]" -ForegroundColor Yellow
+        Write-Host "Usage: .\dev.ps1 [run|build|clean|watch|help]" -ForegroundColor Yellow
     }
 }
 

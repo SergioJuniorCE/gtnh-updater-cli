@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -53,7 +54,12 @@ func main() {
 		ti.Focus()
 	}
 
-	m := model{list: l, text: ti, step: initialStep}
+	prog := progress.New(
+		progress.WithDefaultGradient(),
+		progress.WithWidth(60),
+	)
+
+	m := model{list: l, text: ti, step: initialStep, progress: prog}
 
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fmt.Println("Error running program:", err)

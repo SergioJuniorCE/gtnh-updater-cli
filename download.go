@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 )
 
 const (
@@ -18,8 +19,35 @@ const (
 	gtnhDownloadsListingURL    = gtnhDownloadsBaseURL + gtnhDownloadsDownloadsPath + "/?raw"
 )
 
+type progressReader struct {
+	reader    io.Reader
+	total     int64
+	readBytes int64
+	callback  func(downloaded, total int64)
+}
+
+func newProgressReader(r io.Reader, total int64, cb func(downloaded, total int64)) *progressReader {
+	return &progressReader{reader: r, total: total, callback: cb}
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.reader.Read(b)
+	if n > 0 {
+		read := atomic.AddInt64(&p.readBytes, int64(n))
+		if p.callback != nil {
+			p.callback(read, p.total)
+		}
+	}
+	return n, err
+}
+
+func (p *progressReader) read() int64 {
+	return atomic.LoadInt64(&p.readBytes)
+}
+
 // downloadVersionZip downloads the selected version zip into destDir and returns the file path.
-func downloadVersionZip(versionRef, destDir string) (string, error) {
+// If progress is non-nil it will receive the number of bytes downloaded and the total size (when known).
+func downloadVersionZip(versionRef, destDir string, progress func(downloaded, total int64)) (string, error) {
 	versionRef = strings.TrimSpace(versionRef)
 	if versionRef == "" {
 		return "", fmt.Errorf("empty version file name")
@@ -64,20 +92,32 @@ func downloadVersionZip(versionRef, destDir string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		return "", err
+
+	if progress != nil {
+		reader := &progressReader{reader: resp.Body, total: resp.ContentLength, callback: progress}
+		if _, err := io.Copy(f, reader); err != nil {
+			return "", err
+		}
+		progress(reader.read(), reader.total)
+	} else {
+		if _, err := io.Copy(f, resp.Body); err != nil {
+			return "", err
+		}
 	}
 	return zipPath, nil
 }
 
 // extractZip extracts the zip archive into destDir. It prevents path traversal and
-// attempts to preserve directory/file structure.
-func extractZip(zipPath, destDir string) error {
+// attempts to preserve directory/file structure. If progress is non-nil it receives
+// the number of entries processed out of the total and the current entry name.
+func extractZip(zipPath, destDir string, progress func(processed, total int, name string)) error {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return err
 	}
 	defer r.Close()
+	totalEntries := len(r.File)
+	processed := 0
 	for _, f := range r.File {
 		cleanName := filepath.Clean(f.Name)
 		if strings.HasPrefix(cleanName, "..") {
@@ -92,6 +132,10 @@ func extractZip(zipPath, destDir string) error {
 			if err := os.MkdirAll(targetPath, 0o755); err != nil {
 				return err
 			}
+			processed++
+			if progress != nil {
+				progress(processed, totalEntries, f.Name)
+			}
 			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
@@ -105,15 +149,18 @@ func extractZip(zipPath, destDir string) error {
 			defer rc.Close()
 			out, err := os.Create(targetPath)
 			if err != nil {
-				rc.Close()
-				panic(err)
+				return
 			}
 			defer out.Close()
 			_, err = io.Copy(out, rc)
 			if err != nil {
-				panic(err)
+				return
 			}
 		}()
+		processed++
+		if progress != nil {
+			progress(processed, totalEntries, f.Name)
+		}
 	}
 	return nil
 }

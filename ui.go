@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -14,11 +15,13 @@ import (
 type model struct {
 	list             list.Model
 	text             textinput.Model
+	progress         progress.Model
 	choice           string
 	selectedInstance string
 	selectedVersion  string
 	quitting         bool
 	step             int
+	statusMessage    string
 }
 
 const (
@@ -26,6 +29,7 @@ const (
 	stepListInstances
 	stepPickVersion
 	stepPromptDest
+	stepProgress
 	stepDone
 )
 
@@ -142,59 +146,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.text.Placeholder = "Instances directory not set. Restart."
 					break
 				}
-				dest := filepath.Join(base, name)
-				created := false
-				info, err := os.Stat(dest)
-				if os.IsNotExist(err) {
-					if err := os.MkdirAll(dest, 0o755); err != nil {
-						m.text.SetValue("")
-						m.text.Placeholder = "Failed to create folder. Try another name."
-						break
-					}
-					created = true
-				} else if err != nil {
-					m.text.SetValue("")
-					m.text.Placeholder = "Cannot access destination folder. Try another name."
-					break
-				} else if !info.IsDir() {
-					m.text.SetValue("")
-					m.text.Placeholder = "A file with that name exists. Try another name."
-					break
-				}
-				source := filepath.Join(base, m.selectedInstance)
-				// backup only if destination already existed
-				if !created {
-					if _, err := backupInstanceDir(dest); err != nil {
-						m.choice = fmt.Sprintf("Backup failed: %v", err)
-						m.step = stepDone
-						return m, tea.Quit
-					}
-				}
-				// download and extract selected GTNH version into destination
-				zipPath, err := downloadVersionZip(m.selectedVersion, dest)
-				if err != nil {
-					m.choice = fmt.Sprintf("Download failed: %v", err)
-					m.step = stepDone
-					return m, tea.Quit
-				}
-				if err := extractZip(zipPath, dest); err != nil {
-					m.choice = fmt.Sprintf("Extract failed: %v", err)
-					m.step = stepDone
-					return m, tea.Quit
-				}
-				_ = os.Remove(zipPath)
-				_ = maybeFlattenSingleDir(dest)
-				// copy user data from selected instance
-				if err := migrateInstance(source, dest); err != nil {
-					m.choice = fmt.Sprintf("Migration failed: %v", err)
-					m.step = stepDone
-					return m, tea.Quit
-				}
-				m.choice = fmt.Sprintf("Created new instance '%s' at\n%s\nwith version: %s", m.selectedInstance, dest, m.selectedVersion)
-				m.step = stepDone
-				return m, tea.Quit
+				sourcePath := filepath.Join(base, m.selectedInstance)
+				destPath := filepath.Join(base, name)
+				return m.beginMigration(sourcePath, destPath)
 			}
 		}
+	case progress.FrameMsg:
+		if m.step == stepProgress {
+			pm, cmd := m.progress.Update(msg)
+			if progressModel, ok := pm.(progress.Model); ok {
+				m.progress = progressModel
+			}
+			return m, cmd
+		}
+		return m, nil
+	case progressCompleteMsg:
+		if msg.err != nil {
+			m.choice = fmt.Sprintf("Migration failed: %v", msg.err)
+		} else {
+			m.choice = msg.message
+		}
+		m.step = stepDone
+		return m, tea.Quit
 	}
 
 	var cmd tea.Cmd
@@ -212,10 +185,104 @@ func (m model) View() string {
 		return "\n" + titleStyle.Render("Enter your instances folder path:") + "\n\n  " + m.text.View() + "\n\n  Press Enter to continue"
 	case stepPromptDest:
 		return "\n" + titleStyle.Render("Enter destination instance path:") + "\n\n  " + m.text.View() + "\n\n  Press Enter to migrate"
+	case stepProgress:
+		builder := strings.Builder{}
+		builder.WriteString("\n" + titleStyle.Render("Working...") + "\n\n  ")
+		builder.WriteString(m.progress.View())
+		builder.WriteString("\n\n  " + m.statusMessage)
+		return builder.String()
 	case stepListInstances, stepPickVersion:
 		return "\n" + m.list.View()
 	case stepDone:
 		return quitTextStyle.Render(m.choice)
 	}
 	return ""
+}
+
+func (m model) beginMigration(source, dest string) (tea.Model, tea.Cmd) {
+	if m.selectedInstance == "" {
+		m.choice = "No source instance selected."
+		m.step = stepDone
+		return m, tea.Quit
+	}
+	if m.selectedVersion == "" || m.selectedVersion == "No versions available" {
+		m.choice = "No GTNH version selected."
+		m.step = stepDone
+		return m, tea.Quit
+	}
+	m.statusMessage = "Starting migration..."
+	m.step = stepProgress
+	initCmd := m.progress.SetPercent(0)
+	return m, tea.Batch(initCmd, migrateCmd(source, dest, m.selectedVersion))
+}
+
+type progressCompleteMsg struct {
+	message string
+	err     error
+}
+
+func migrateCmd(source, dest, version string) tea.Cmd {
+	return func() tea.Msg {
+		if err := executeMigration(source, dest, version); err != nil {
+			return progressCompleteMsg{err: err}
+		}
+		return progressCompleteMsg{message: fmt.Sprintf("Migration complete! New instance created at %s", dest)}
+	}
+}
+
+func executeMigration(source, dest, version string) error {
+	if source == "" {
+		return fmt.Errorf("source instance path is empty")
+	}
+	if !pathExists(source) {
+		return fmt.Errorf("source instance not found: %s", source)
+	}
+	if version == "" || version == "No versions available" {
+		return fmt.Errorf("no GTNH version selected")
+	}
+	if _, err := os.Stat(dest); err == nil {
+		return fmt.Errorf("destination already exists: %s", dest)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("unable to access destination: %w", err)
+	}
+
+	tmpDir, err := os.MkdirTemp("", "gtnh-updater-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	zipPath, err := downloadVersionZip(version, tmpDir, nil)
+	if err != nil {
+		return err
+	}
+
+	if err = os.MkdirAll(dest, 0o755); err != nil {
+		return err
+	}
+	cleanupDest := true
+	defer func() {
+		if cleanupDest {
+			_ = os.RemoveAll(dest)
+		}
+	}()
+
+	if err = extractZip(zipPath, dest, nil); err != nil {
+		return err
+	}
+
+	if err = maybeFlattenSingleDir(dest); err != nil {
+		return err
+	}
+
+	if err = migrateInstance(source, dest); err != nil {
+		return err
+	}
+
+	if err = writeMigrationTips(dest); err != nil {
+		return err
+	}
+
+	cleanupDest = false
+	return nil
 }

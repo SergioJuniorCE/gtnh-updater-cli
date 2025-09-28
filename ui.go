@@ -279,10 +279,6 @@ func executeMigration(source, dest, version string) error {
 		return err
 	}
 
-	if err = writeMigrationTips(dest); err != nil {
-		return err
-	}
-
 	cleanupDest = false
 	return nil
 }

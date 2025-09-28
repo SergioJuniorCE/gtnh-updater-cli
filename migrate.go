@@ -111,6 +111,7 @@ func migrateInstance(sourceInstancePath, destinationInstancePath string) error {
 		"localconfig.cfg",
 		"BotaniaVars.dat",
 		"options.txt",
+		filepath.Join("serverutilities", "serverutilities.cfg"),
 	}
 
 	sourceRoots := []string{
@@ -145,23 +146,4 @@ func migrateInstance(sourceInstancePath, destinationInstancePath string) error {
 		}
 	}
 	return nil
-}
-
-func writeMigrationTips(destInstancePath string) error {
-	content := `Method #2: Migrating - Helpful reminders
-
-Configure ServerUtilities permissions in /serverutilities/
-Disable pollution in /config/GregTech/Pollution.cfg
-Enable borderless fullscreen mode in /config/lwjgl3ify.cfg
-Enable nuclear reactor sync in /config/hodgepodge.cfg
-Disable compact vertex format in settings (under advanced)
-Disable shader usage in Botania mod settings
-Enable wuss mode in Thaumcraft mod settings (disables warp events)
-Disable item dislocator sound in Draconic Evolution mod settings
-Disable tool cycling in Adventure Backpacks mod settings (under gameplay)
-Change StructureLib autoPlaceBudget to 200 (under common)
-Change StructureLib autoPlaceInterval to 1 (under common)
-`
-	path := filepath.Join(destInstancePath, "MIGRATION_TIPS.txt")
-	return os.WriteFile(path, []byte(content), 0o644)
 }

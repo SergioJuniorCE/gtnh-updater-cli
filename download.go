@@ -26,10 +26,6 @@ type progressReader struct {
 	callback  func(downloaded, total int64)
 }
 
-func newProgressReader(r io.Reader, total int64, cb func(downloaded, total int64)) *progressReader {
-	return &progressReader{reader: r, total: total, callback: cb}
-}
-
 func (p *progressReader) Read(b []byte) (int, error) {
 	n, err := p.reader.Read(b)
 	if n > 0 {
@@ -145,18 +141,17 @@ func extractZip(zipPath, destDir string, progress func(processed, total int, nam
 		if err != nil {
 			return err
 		}
-		func() {
-			defer rc.Close()
-			out, err := os.Create(targetPath)
-			if err != nil {
-				return
-			}
-			defer out.Close()
-			_, err = io.Copy(out, rc)
-			if err != nil {
-				return
-			}
-		}()
+		out, err := os.Create(targetPath)
+		if err != nil {
+			rc.Close()
+			return err
+		}
+		_, copyErr := io.Copy(out, rc)
+		out.Close()
+		rc.Close()
+		if copyErr != nil {
+			return copyErr
+		}
 		processed++
 		if progress != nil {
 			progress(processed, totalEntries, f.Name)

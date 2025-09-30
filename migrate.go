@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 func copyFile(src, dst string) error {
@@ -72,26 +71,6 @@ func preferredDestinationPath(rel string, roots []string) string {
 		return rel
 	}
 	return filepath.Join(roots[len(roots)-1], rel)
-}
-
-// backupInstanceDir creates a timestamped folder copy of the destination instance
-// e.g. C:\instances\GTNH -> C:\instances\GTNH.backup-20250101-120102
-func backupInstanceDir(destInstancePath string) (string, error) {
-	info, err := os.Stat(destInstancePath)
-	if err != nil {
-		return "", fmt.Errorf("destination not found: %w", err)
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("destination is not a directory")
-	}
-	parent := filepath.Dir(destInstancePath)
-	base := filepath.Base(destInstancePath)
-	ts := time.Now().Format("20060102-150405")
-	backupPath := filepath.Join(parent, fmt.Sprintf("%s.backup-%s", base, ts))
-	if err := copyDir(destInstancePath, backupPath); err != nil {
-		return "", err
-	}
-	return backupPath, nil
 }
 
 // migrateInstance copies selected folders/files from source instance into destination instance
